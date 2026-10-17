@@ -9,6 +9,12 @@
 - Coils、Discrete Inputs、Holding Registers、Input Registers 四类 Mapping
 - 基于 Mapping 的异步 RTU/TCP 从站服务
 
+本项目是在学习和研究 Modbus 通信实现的基础上开发的，部分协议语义、四类数据区
+及 Mapping 设计参考了 [libmodbus](https://github.com/stephane/libmodbus)；TCP
+异步连接的部分实现思路参考了
+[Mazurel/Modbus 的 TCP connection.cpp](https://github.com/Mazurel/Modbus/blob/master/src/TCP/connection.cpp)。
+本项目的代码结构、C++ API 和 Asio 异步实现是独立编写的。感谢相关开源项目作者的工作。
+
 ## 目录与命名空间
 
 公共头文件和实现文件按职责分层，并保持目录对应：
