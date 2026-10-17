@@ -6,6 +6,7 @@ cmake-build-*/
 # 编译数据库和工具缓存
 compile_commands.json
 .cache/
+.waylog/
 .clangd/
 
 # 编译产物
