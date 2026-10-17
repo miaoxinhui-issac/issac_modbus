@@ -1,0 +1,33 @@
+# CMake 构建目录
+build/
+build-*/
+cmake-build-*/
+
+# 编译数据库和工具缓存
+compile_commands.json
+.cache/
+.clangd/
+
+# 编译产物
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.dll
+*.dylib
+*.exe
+
+# 测试和覆盖率产物
+Testing/
+coverage/
+*.gcda
+*.gcno
+*.gcov
+
+# 编辑器和系统文件
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
