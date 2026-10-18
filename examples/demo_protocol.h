@@ -1,7 +1,7 @@
 #ifndef ISSAC_MODBUS_DEMO_PROTOCOL_H
 #define ISSAC_MODBUS_DEMO_PROTOCOL_H
 
-#include <issac/modbus/modbus.h>
+#include <issac_modbus.h>
 
 #include <cstdint>
 #include <iostream>
@@ -9,7 +9,7 @@
 #include <optional>
 #include <vector>
 
-namespace issac::modbus::demo
+namespace issac_modbus_demo
 {
 
 namespace soft_protocol
@@ -48,9 +48,9 @@ constexpr std::uint16_t InputTemperature = InputRegisterStart + 1;
 constexpr std::uint16_t InputPressure = InputRegisterStart + 2;
 constexpr std::uint16_t InputTelemetryCounter = InputRegisterStart + 3;
 
-inline core::Mapping makeMapping()
+inline issac_modbus::Mapping makeMapping()
 {
-    auto mapping = core::Mapping::newStartAddress(
+    auto mapping = issac_modbus::Mapping::newStartAddress(
         CoilStart, PointCount, DiscreteInputStart, PointCount, HoldingRegisterStart, PointCount,
         InputRegisterStart, PointCount);
 
@@ -76,11 +76,11 @@ inline core::Mapping makeMapping()
     return mapping;
 }
 
-inline core::MappingHooks makeHooks()
+inline issac_modbus::MappingHooks makeHooks()
 {
     auto counter = std::make_shared<std::uint16_t>(0);
-    core::MappingHooks hooks;
-    hooks.beforeRequest = [counter](core::Mapping& mapping)
+    issac_modbus::MappingHooks hooks;
+    hooks.beforeRequest = [counter](issac_modbus::Mapping& mapping)
     {
         const auto targetRpm = mapping.holdingRegisters[0];
         mapping.discreteInputs[0] = 1; // ready
@@ -92,7 +92,7 @@ inline core::MappingHooks makeHooks()
         mapping.inputRegisters[2] = 1013;
         mapping.inputRegisters[3] = ++*counter;
     };
-    hooks.afterRequest = [](const core::Mapping& before, core::Mapping& after)
+    hooks.afterRequest = [](const issac_modbus::Mapping& before, issac_modbus::Mapping& after)
     {
         if (before.coils != after.coils || before.holdingRegisters != after.holdingRegisters)
         {
@@ -105,7 +105,7 @@ inline core::MappingHooks makeHooks()
 } // namespace soft_protocol
 
 inline void printValues(const char* name,
-                        const std::vector<::issac::modbus::protocol::ModbusCell>& values)
+                        const std::vector<::issac_modbus::ModbusCell>& values)
 {
     std::cout << "[master] " << name << ":";
     for (const auto& value : values)
@@ -118,8 +118,8 @@ class MasterFlow final : public std::enable_shared_from_this<MasterFlow<Connecti
 {
   public:
     using ErrorCode = typename Connection::ErrorCode;
-    using Values = std::vector<::issac::modbus::protocol::ModbusCell>;
-    using Exception = ::issac::modbus::protocol::ModbusException;
+    using Values = std::vector<::issac_modbus::ModbusCell>;
+    using Exception = ::issac_modbus::ModbusException;
 
     MasterFlow(Connection& connection, asio::io_context& io) : connection_(connection), io_(io) {}
 
@@ -255,6 +255,6 @@ void runMasterFlow(Connection& connection, asio::io_context& io)
     std::make_shared<MasterFlow<Connection>>(connection, io)->start();
 }
 
-} // namespace issac::modbus::demo
+} // namespace issac_modbus_demo
 
 #endif // ISSAC_MODBUS_DEMO_PROTOCOL_H

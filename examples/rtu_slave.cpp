@@ -14,11 +14,11 @@ int main(int argc, char* argv[])
     try
     {
         asio::io_context io;
-        issac::modbus::core::Mapping mapping = issac::modbus::demo::soft_protocol::makeMapping();
-        issac::modbus::transport::rtu::Connection connection(io, device, baud);
+        issac_modbus::Mapping mapping = issac_modbus_demo::soft_protocol::makeMapping();
+        issac_modbus::RtuConnection connection(io, device, baud);
         connection.setSerialMode(
-            useRs485 ? issac::modbus::transport::rtu::Connection::SerialMode::RS485
-                     : issac::modbus::transport::rtu::Connection::SerialMode::RS232);
+            useRs485 ? issac_modbus::RtuConnection::SerialMode::RS485
+                     : issac_modbus::RtuConnection::SerialMode::RS232);
         connection.open();
         asio::signal_set signals(io, SIGINT, SIGTERM);
         signals.async_wait(
@@ -30,9 +30,9 @@ int main(int argc, char* argv[])
 
         std::cout << "RTU slave listening on " << device << " at " << baud
                   << " baud, mode " << (useRs485 ? "RS485" : "RS232") << ", unit "
-                  << static_cast<unsigned int>(issac::modbus::demo::soft_protocol::UnitId)
+                  << static_cast<unsigned int>(issac_modbus_demo::soft_protocol::UnitId)
                   << std::endl;
-        connection.asyncServe(mapping, issac::modbus::demo::soft_protocol::makeHooks(),
+        connection.asyncServe(mapping, issac_modbus_demo::soft_protocol::makeHooks(),
                               [](const std::error_code& error)
                               {
                                   if (error)

@@ -11,9 +11,9 @@ int main(int argc, char* argv[])
     try
     {
         asio::io_context io;
-        issac::modbus::core::Mapping mapping =
-            issac::modbus::demo::soft_protocol::makeMapping();
-        issac::modbus::server::tcp::Server server(io, port);
+        issac_modbus::Mapping mapping =
+            issac_modbus_demo::soft_protocol::makeMapping();
+        issac_modbus::TcpServer server(io, port);
         asio::signal_set signals(io, SIGINT, SIGTERM);
         signals.async_wait([&](const std::error_code&, int)
                            {
@@ -23,9 +23,9 @@ int main(int argc, char* argv[])
 
         std::cout << "TCP slave listening on 0.0.0.0:" << port << ", unit "
                   << static_cast<unsigned int>(
-                         issac::modbus::demo::soft_protocol::UnitId)
+                         issac_modbus_demo::soft_protocol::UnitId)
                   << std::endl;
-        server.asyncServe(mapping, issac::modbus::demo::soft_protocol::makeHooks(),
+        server.asyncServe(mapping, issac_modbus_demo::soft_protocol::makeHooks(),
                           [](const std::error_code& error)
                           {
                               if (error)

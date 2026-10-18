@@ -23,14 +23,14 @@ if(NOT ISSAC_MODBUS_ASIO_INCLUDE_DIR)
 endif()
 
 add_library(issac_modbus
-    src/core/modbusError.cpp
-    src/core/modbusMapping.cpp
-    src/protocol/modbusException.cpp
-    src/protocol/modbusRequest.cpp
-    src/protocol/modbusResponse.cpp
-    src/transport/modbusSerial.cpp
-    src/transport/modbusTcpConnection.cpp
-    src/server/modbusTcpServer.cpp)
+    src/unit/modbusError.cpp
+    src/unit/modbusMapping.cpp
+    src/unit/modbusException.cpp
+    src/unit/modbusRequest.cpp
+    src/unit/modbusResponse.cpp
+    src/modbusRtu/modbusSerial.cpp
+    src/modbusTcp/modbusTcpConnection.cpp
+    src/modbusTcp/modbusTcpServer.cpp)
 
 add_library(issac_modbus::issac_modbus ALIAS issac_modbus)
 

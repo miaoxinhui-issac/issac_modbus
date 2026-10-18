@@ -10,7 +10,7 @@ int main(int argc, char* argv[])
     const auto port = static_cast<std::uint16_t>(argc > 2 ? std::strtoul(argv[2], nullptr, 10) : 1502);
 
     asio::io_context io;
-    auto connection = std::make_shared<issac::modbus::transport::tcp::Connection>(io, host, port);
+    auto connection = std::make_shared<issac_modbus::TcpConnection>(io, host, port);
     connection->setTimeout(std::chrono::seconds(2));
     connection->setMessageId(1);
     connection->asyncConnect(
@@ -22,7 +22,7 @@ int main(int argc, char* argv[])
                 io.stop();
                 return;
             }
-            issac::modbus::demo::runMasterFlow(*connection, io);
+            issac_modbus_demo::runMasterFlow(*connection, io);
         });
     io.run();
     return EXIT_SUCCESS;

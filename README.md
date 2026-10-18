@@ -16,34 +16,35 @@
 
 ## 目录与命名空间
 
-公共头文件和实现文件按职责分层，并保持目录对应：
+公共头文件和实现文件按三个模块组织：
 
 ```text
-include/issac/modbus/
-  protocol/  Modbus 报文、功能码、CRC 和数据类型
-  core/      Mapping、错误码和事务策略
-  transport/ TCP/RTU 客户端连接
-  server/    TCP 从站服务端
+include/
+  issac_modbus.h
+  issac_modbus/
+    unit/      Modbus 报文、功能码、Mapping、CRC 和公共类型
+    modbusTcp/ TCP 连接和 TCP 服务端
+    modbusRtu/ RTU 串口连接
 
 src/
-  protocol/  Modbus 报文、CRC 和异常响应实现
-  core/      Mapping 和错误码实现
-  transport/ TCP/RTU 客户端连接实现
-  server/    TCP 从站服务实现
+  unit/
+  modbusTcp/
+  modbusRtu/
 ```
 
-新代码建议使用统一入口和分层命名空间：
+新代码只需要使用根命名空间 `issac_modbus`：
 
 ```cpp
-#include <issac/modbus/modbus.h>
+#include <issac_modbus.h>
 
-issac::modbus::protocol::ModbusRequest request;
-issac::modbus::core::Mapping mapping;
-issac::modbus::transport::tcp::Connection connection(ioContext, host, port);
-issac::modbus::server::tcp::Server server(ioContext, port);
+issac_modbus::ModbusRequest request;
+issac_modbus::Mapping mapping;
+issac_modbus::TcpConnection connection(ioContext, host, port);
+issac_modbus::TcpServer server(ioContext, port);
+issac_modbus::RtuConnection rtu(ioContext, device, 9600);
 ```
 
-旧版 `MB` 和全局协议类型仍保留为兼容别名，便于逐步迁移。
+所有公共类型和函数都位于 `issac_modbus` 命名空间。
 
 ## Mapping 地址空间
 
@@ -52,7 +53,7 @@ issac::modbus::server::tcp::Server server(ioContext, port);
 `newStartAddress()`，参数顺序与 `modbus_mapping_new_start_address()` 一致：
 
 ```cpp
-auto mapping = issac::modbus::core::Mapping::newStartAddress(
+auto mapping = issac_modbus::Mapping::newStartAddress(
     100, 1000,  // coils: start 100, count 1000
     0, 1024,    // discrete inputs: start 0, count 1024
     400, 5000,  // holding registers: start 400, count 5000
