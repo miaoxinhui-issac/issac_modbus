@@ -22,12 +22,12 @@
 include/
   issac_modbus.h
   issac_modbus/
-    unit/      Modbus 报文、功能码、Mapping、CRC 和公共类型
+    util/      Modbus 报文、功能码、Mapping、CRC 和公共类型
     modbusTcp/ TCP 连接和 TCP 服务端
     modbusRtu/ RTU 串口连接
 
 src/
-  unit/
+  util/
   modbusTcp/
   modbusRtu/
 ```

@@ -1,4 +1,4 @@
-#include "issac_modbus/unit/modbusResponse.h"
+#include "issac_modbus/util/modbusResponse.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -8,8 +8,8 @@
 #include <utility>
 #include <vector>
 
-#include "issac_modbus/unit/crc.h"
-#include "issac_modbus/unit/modbusProtocol.h"
+#include "issac_modbus/util/crc.h"
+#include "issac_modbus/util/modbusProtocol.h"
 
 
 namespace issac_modbus

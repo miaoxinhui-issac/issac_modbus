@@ -12,8 +12,8 @@
 #include <string_view>
 #include <vector>
 
-#include "issac_modbus/unit/crc.h"
-#include "issac_modbus/unit/modbusCell.h"
+#include "issac_modbus/util/crc.h"
+#include "issac_modbus/util/modbusCell.h"
 
 namespace issac_modbus
 {

@@ -1,4 +1,4 @@
-#include "issac_modbus/unit/modbusException.h"
+#include "issac_modbus/util/modbusException.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "issac_modbus/unit/crc.h"
+#include "issac_modbus/util/crc.h"
 
 
 namespace issac_modbus

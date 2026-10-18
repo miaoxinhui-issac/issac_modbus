@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "issac_modbus/unit/modbusUtils.h"
+#include "issac_modbus/util/modbusUtils.h"
 
 namespace issac_modbus
 {

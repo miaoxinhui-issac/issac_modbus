@@ -9,7 +9,7 @@
 #include <asio.hpp>
 
 #include "issac_modbus/modbusTcp/modbusTcpConnection.h"
-#include "issac_modbus/unit/modbusMapping.h"
+#include "issac_modbus/util/modbusMapping.h"
 
 namespace issac_modbus
 {

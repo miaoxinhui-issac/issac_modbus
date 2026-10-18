@@ -7,8 +7,8 @@
 #include <optional>
 #include <system_error>
 
-#include "issac_modbus/unit/modbusException.h"
-#include "issac_modbus/unit/modbusResponse.h"
+#include "issac_modbus/util/modbusException.h"
+#include "issac_modbus/util/modbusResponse.h"
 
 namespace issac_modbus
 {

@@ -4,7 +4,7 @@
 #include <system_error>
 #include <type_traits>
 
-#include "issac_modbus/unit/modbusUtils.h"
+#include "issac_modbus/util/modbusUtils.h"
 
 namespace issac_modbus
 {

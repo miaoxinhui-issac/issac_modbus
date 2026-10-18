@@ -6,9 +6,9 @@
 #include <stdexcept>
 #include <string>
 
-#include "issac_modbus/unit/modbusRequest.h"
-#include "issac_modbus/unit/modbusResponse.h"
-#include "issac_modbus/unit/modbusUtils.h"
+#include "issac_modbus/util/modbusRequest.h"
+#include "issac_modbus/util/modbusResponse.h"
+#include "issac_modbus/util/modbusUtils.h"
 
 namespace issac_modbus
 {

@@ -11,10 +11,10 @@
 
 #include <asio.hpp>
 
-#include "issac_modbus/unit/modbusException.h"
-#include "issac_modbus/unit/modbusRequest.h"
-#include "issac_modbus/unit/modbusResponse.h"
-#include "issac_modbus/unit/modbusTransaction.h"
+#include "issac_modbus/util/modbusException.h"
+#include "issac_modbus/util/modbusRequest.h"
+#include "issac_modbus/util/modbusResponse.h"
+#include "issac_modbus/util/modbusTransaction.h"
 
 namespace issac_modbus
 {
