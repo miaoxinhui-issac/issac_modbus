@@ -2,7 +2,7 @@
 
 基于 C++17 和 standalone Asio 的异步 Modbus RTU/TCP 库，包含：
 
-- Modbus RTU 串口异步收发和 CRC16 校验
+- Modbus RTU 手动帧通道、主站事务队列和从站服务
 - Linux 串口参数、RS485 ioctl 和输入缓冲刷新
 - Modbus TCP MBAP 头、事务 ID 和多客户端服务
 - 请求/响应校验、异常响应、超时和重试策略
@@ -24,7 +24,7 @@ include/
   issac_modbus/
     util/      Modbus 报文、功能码、Mapping、CRC 和公共类型
     modbusTcp/ TCP 连接和 TCP 服务端
-    modbusRtu/ RTU 串口连接
+    modbusRtu/ RTU 手动通道、主站、从站和公共配置
 
 src/
   util/
@@ -41,10 +41,74 @@ issac_modbus::ModbusRequest request;
 issac_modbus::Mapping mapping;
 issac_modbus::TcpConnection connection(ioContext, host, port);
 issac_modbus::TcpServer server(ioContext, port);
-issac_modbus::RtuConnection rtu(ioContext, device, 9600);
+issac_modbus::RtuMaster master(ioContext, device);
+issac_modbus::RtuSlave slave(ioContext, device, mapping);
+issac_modbus::RtuConnection manual(ioContext, device);
 ```
 
 所有公共类型和函数都位于 `issac_modbus` 命名空间。
+
+## RTU 角色
+
+RTU 按用途拆成三个互斥角色：
+
+| 类型 | 作用 |
+| --- | --- |
+| `RtuMaster` | 主站事务 FIFO、响应匹配、重试和常用读写接口 |
+| `RtuSlave` | 固定从站地址、地址过滤、广播、Mapping 和业务钩子 |
+| `RtuConnection` | 手动调试，只发送或接收含 CRC 的完整 RTU ADU |
+
+手动接收需要区分请求帧和响应帧；只接收响应时可以继续使用
+`asyncAwaitRawMessage(handler, timeout)` 重载。
+
+主站：
+
+```cpp
+issac_modbus::SerialOptions serial;
+serial.baudRate = 115200;
+serial.parity = issac_modbus::Parity::Even;
+
+issac_modbus::MasterOptions options;
+options.responseTimeout = std::chrono::milliseconds(500);
+options.retryPolicy.maxAttempts = 2;
+
+issac_modbus::RtuMaster master(io, "/dev/ttyUSB0", serial, options);
+master.open();
+master.asyncReadHoldingRegisters(
+    1, 0, 2,
+    [](const std::error_code& error, std::vector<issac_modbus::ModbusCell> values,
+       std::optional<issac_modbus::ModbusException>)
+    {
+        if (!error)
+        {
+            // values[0].reg(), values[1].reg()
+        }
+    });
+io.run();
+```
+
+从站：
+
+```cpp
+auto mapping = std::make_shared<issac_modbus::Mapping>(0, 0, 100, 0);
+issac_modbus::SlaveOptions slaveOptions;
+slaveOptions.unitId = 1;
+
+issac_modbus::RtuSlave slave(io, "/dev/ttyUSB1", mapping, serial, slaveOptions);
+slave.open();
+slave.asyncServe([](const std::error_code& error)
+{
+    // 整次服务退出时调用一次。
+});
+io.run();
+```
+
+一个串口同一时间只能交给一个角色对象。不要用两个对象同时打开同一个设备路径。
+`io_context` 必须活到取消、关闭和完成回调结束；回调统一异步派发，不应在回调内抛异常。
+
+内部没有通用的 Send/Receive/Clear 任务框架。`SerialTransport` 同时只保存一个
+活动读或写；主站事务排队由 `RtuMaster` 管理，从站接收、业务和响应循环由
+`RtuSlave` 管理。串口配置只允许在关闭状态修改。
 
 ## Mapping 地址空间
 
@@ -77,6 +141,7 @@ mapping.holdingRegisters[4] = 42; // Modbus 地址 404
 ```bash
 cmake -S . -B build
 cmake --build build -j2
+ctest --test-dir build --output-on-failure
 ```
 
 ## Linux 主站/从站示例
@@ -129,6 +194,16 @@ RTU 示例默认使用普通 `RS232` 模式，不调用 Linux RS485 ioctl，适�
 从站的 `beforeRequest` 钩子会刷新遥测值，`afterRequest` 钩子会记录可写数据变化。
 
 如果只需要库而不需要示例，可以使用 `-DISSAC_MODBUS_BUILD_EXAMPLES=OFF`。
+
+RTU 测试使用 Linux 伪终端，不需要真实串口。ASan/UBSan 构建可以额外指定：
+
+```bash
+cmake -S . -B build-asan \
+  -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+  -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+cmake --build build-asan -j2
+ctest --test-dir build-asan --output-on-failure
+```
 
 ## 安装
 

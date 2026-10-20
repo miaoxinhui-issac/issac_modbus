@@ -10,6 +10,7 @@ option(ISSAC_MODBUS_ENABLE_CLANG_TIDY "启用 clang-tidy" OFF)
 option(ISSAC_MODBUS_BUILD_EXAMPLES "构建 Linux 主站/从站示例" ON)
 
 find_package(Threads REQUIRED)
+include(CTest)
 
 set(ISSAC_MODBUS_ASIO_INCLUDE_DIR "" CACHE PATH
     "Standalone Asio include directory")
@@ -29,6 +30,10 @@ add_library(issac_modbus
     src/util/modbusRequest.cpp
     src/util/modbusResponse.cpp
     src/modbusRtu/modbusSerial.cpp
+    src/modbusRtu/detail/rtuCodec.cpp
+    src/modbusRtu/detail/serialTransport.cpp
+    src/modbusRtu/rtuMaster.cpp
+    src/modbusRtu/rtuSlave.cpp
     src/modbusTcp/modbusTcpConnection.cpp
     src/modbusTcp/modbusTcpServer.cpp)
 
@@ -50,6 +55,15 @@ if(ISSAC_MODBUS_BUILD_EXAMPLES)
         target_include_directories(issac_modbus_${example_name}
             PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/examples)
     endforeach()
+endif()
+
+if(BUILD_TESTING)
+    find_library(ISSAC_MODBUS_UTIL_LIBRARY util REQUIRED)
+    add_executable(issac_modbus_rtu_tests tests/rtu_roles.cpp)
+    target_link_libraries(issac_modbus_rtu_tests
+        PRIVATE issac_modbus ${ISSAC_MODBUS_UTIL_LIBRARY})
+    add_test(NAME issac_modbus_rtu_roles COMMAND issac_modbus_rtu_tests)
+    set_tests_properties(issac_modbus_rtu_roles PROPERTIES TIMEOUT 30)
 endif()
 
 if(ISSAC_MODBUS_ENABLE_CLANG_TIDY)

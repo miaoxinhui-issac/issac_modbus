@@ -67,10 +67,9 @@ inline void validateRequestLimits(const ModbusRequest& request)
 /// @brief 校验通用 Modbus 单元地址是否在 0 到 255 之间。
 inline void validateUnitId(std::uint8_t id)
 {
-    if (id > 255)
-    {
-        throw std::invalid_argument("Modbus unit ID must be in range 0..255.");
-    }
+    // Unit IDs are transmitted as uint8_t, so the 0..255 range is enforced by
+    // the type itself. Keep the function for callers that use a common API.
+    (void)id;
 }
 
 /// @brief 校验 RTU 单元地址是否在 0 到 247 之间。

@@ -13,15 +13,17 @@ int main(int argc, char* argv[])
     try
     {
         asio::io_context io;
-        issac_modbus::RtuConnection connection(io, device, baud);
-        connection.setSerialMode(
-            useRs485 ? issac_modbus::RtuConnection::SerialMode::RS485
-                     : issac_modbus::RtuConnection::SerialMode::RS232);
-        connection.setTimeout(std::chrono::seconds(2));
+        issac_modbus::SerialOptions serial;
+        serial.baudRate = baud;
+        serial.serialMode =
+            useRs485 ? issac_modbus::SerialMode::RS485 : issac_modbus::SerialMode::RS232;
+
+        issac_modbus::MasterOptions master;
+        master.responseTimeout = std::chrono::seconds(2);
+        issac_modbus::RtuMaster connection(io, device, serial, master);
         connection.open();
-        std::cout << "RTU master connected to " << device << " at " << baud
-                  << " baud, mode " << (useRs485 ? "RS485" : "RS232")
-                  << std::endl;
+        std::cout << "RTU master connected to " << device << " at " << baud << " baud, mode "
+                  << (useRs485 ? "RS485" : "RS232") << std::endl;
         issac_modbus_demo::runMasterFlow(connection, io);
         io.run();
     }
