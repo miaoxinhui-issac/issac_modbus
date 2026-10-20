@@ -14,6 +14,7 @@
 #include <tuple>
 #include <unistd.h>
 #include <utility>
+#include <vector>
 
 namespace issac_modbus::detail
 {
@@ -151,13 +152,14 @@ struct SerialTransport::State final : std::enable_shared_from_this<SerialTranspo
     mutable std::mutex controlMutex;
     SerialOptions config;
     std::atomic<bool> alive{true};
-    std::atomic<bool> openFlag{false};
-    std::atomic<bool> busyFlag{false};
+    std::atomic<SerialState> serialState{SerialState::Closed};
     std::atomic<bool> activeFlag{false};
     std::atomic<std::uint64_t> submissionEpoch{0};
     bool rs485Managed = false;
     std::shared_ptr<Operation> active;
     Clock::time_point nextTransmit = Clock::now();
+    std::vector<RtuCompletionHandler> closeWaiters;
+    Error closeResult;
 
     template <typename Handler, typename... Args> void notify(Handler handler, Args... args)
     {
@@ -278,10 +280,8 @@ struct SerialTransport::State final : std::enable_shared_from_this<SerialTranspo
         active.reset();
         activeFlag.store(false);
         complete(operation, error);
-        if (!openFlag.load())
+        if (serialState.load() == SerialState::Closing)
             finishClose();
-        else
-            busyFlag.store(false);
     }
 
     void fail(const std::shared_ptr<Operation>& operation, Error error)
@@ -315,7 +315,7 @@ struct SerialTransport::State final : std::enable_shared_from_this<SerialTranspo
             reject(operation, asio::error::operation_aborted);
             return;
         }
-        if (!alive.load() || !openFlag.load())
+        if (!alive.load() || serialState.load() != SerialState::Open)
         {
             reject(operation, asio::error::bad_descriptor);
             return;
@@ -327,7 +327,6 @@ struct SerialTransport::State final : std::enable_shared_from_this<SerialTranspo
         }
         active = operation;
         activeFlag.store(true);
-        busyFlag.store(true);
         beginWrite(operation);
     }
 
@@ -338,7 +337,7 @@ struct SerialTransport::State final : std::enable_shared_from_this<SerialTranspo
             reject(operation, asio::error::operation_aborted);
             return;
         }
-        if (!alive.load() || !openFlag.load())
+        if (!alive.load() || serialState.load() != SerialState::Open)
         {
             reject(operation, asio::error::bad_descriptor);
             return;
@@ -350,7 +349,6 @@ struct SerialTransport::State final : std::enable_shared_from_this<SerialTranspo
         }
         active = operation;
         activeFlag.store(true);
-        busyFlag.store(true);
         beginRead(operation);
     }
 
@@ -577,10 +575,19 @@ struct SerialTransport::State final : std::enable_shared_from_this<SerialTranspo
         finish(operation, {});
     }
 
-    void closeOnStrand()
+    void addCloseWaiter(RtuCompletionHandler handler)
     {
-        openFlag.store(false);
-        busyFlag.store(true);
+        if (!handler)
+            return;
+        if (serialState.load() == SerialState::Closed)
+            notify(std::move(handler), closeResult);
+        else
+            closeWaiters.push_back(std::move(handler));
+    }
+
+    void startClose(RtuCompletionHandler handler)
+    {
+        addCloseWaiter(std::move(handler));
         cancelActive(asio::error::operation_aborted);
         if (!active)
             finishClose();
@@ -590,10 +597,16 @@ struct SerialTransport::State final : std::enable_shared_from_this<SerialTranspo
     {
         if (active)
             return;
-        Error ignored;
-        port.cancel(ignored);
-        port.close(ignored);
-        busyFlag.store(false);
+        Error error;
+        port.cancel(error);
+        port.close(error);
+        closeResult = error;
+        serialState.store(SerialState::Closed);
+        activeFlag.store(false);
+        auto waiters = std::move(closeWaiters);
+        closeWaiters.clear();
+        for (auto& waiter : waiters)
+            notify(std::move(waiter), error);
     }
 };
 
@@ -611,9 +624,9 @@ SerialTransport::~SerialTransport()
 void SerialTransport::open()
 {
     std::lock_guard<std::mutex> lock(state_->controlMutex);
-    if (state_->openFlag.load() || state_->busyFlag.load())
+    if (state_->serialState.load() != SerialState::Closed)
         throw std::system_error(mbError(MBErrorCode::MBConcurrentOperation),
-                                "RTU transport is not idle");
+                                "RTU transport is not closed");
     Error error;
     state_->port.open(state_->path, error);
     if (error)
@@ -628,14 +641,15 @@ void SerialTransport::open()
         state_->port.close(ignored);
         throw;
     }
-    state_->openFlag.store(true);
+    state_->serialState.store(SerialState::Open);
+    state_->closeResult.clear();
     state_->nextTransmit = Clock::now();
 }
 
 void SerialTransport::setOptions(const SerialOptions& options)
 {
     std::lock_guard<std::mutex> lock(state_->controlMutex);
-    if (state_->openFlag.load() || state_->busyFlag.load())
+    if (state_->serialState.load() != SerialState::Closed)
         throw std::system_error(mbError(MBErrorCode::MBConcurrentOperation),
                                 "RTU configuration is allowed only while closed");
     validateOptions(options);
@@ -650,14 +664,53 @@ SerialOptions SerialTransport::options() const
 
 void SerialTransport::close() noexcept
 {
+    try
     {
-        std::lock_guard<std::mutex> lock(state_->controlMutex);
-        ++state_->submissionEpoch;
-        state_->openFlag.store(false);
-        state_->busyFlag.store(true);
+        asyncClose();
     }
+    catch (...)
+    {
+    }
+}
+
+void SerialTransport::asyncClose(RtuCompletionHandler handler)
+{
+    const auto phase = beginClose();
+    continueClose(phase, std::move(handler));
+}
+
+SerialTransport::ClosePhase SerialTransport::beginClose() noexcept
+{
+    std::lock_guard<std::mutex> lock(state_->controlMutex);
+    ++state_->submissionEpoch;
+    const auto current = state_->serialState.load();
+    if (current == SerialState::Open)
+    {
+        state_->serialState.store(SerialState::Closing);
+        return ClosePhase::Initiated;
+    }
+    if (current == SerialState::Closing)
+        return ClosePhase::Waiting;
+    return ClosePhase::AlreadyClosed;
+}
+
+void SerialTransport::continueClose(ClosePhase phase, RtuCompletionHandler handler)
+{
     auto self = state_;
-    asio::dispatch(state_->strand, [self] { self->closeOnStrand(); });
+    if (phase == ClosePhase::AlreadyClosed)
+    {
+        self->notify(std::move(handler), self->closeResult);
+    }
+    else if (phase == ClosePhase::Initiated)
+    {
+        asio::dispatch(state_->strand, [self, handler = std::move(handler)]() mutable
+                       { self->startClose(std::move(handler)); });
+    }
+    else
+    {
+        asio::dispatch(state_->strand, [self, handler = std::move(handler)]() mutable
+                       { self->addCloseWaiter(std::move(handler)); });
+    }
 }
 
 void SerialTransport::cancel() noexcept
@@ -667,9 +720,17 @@ void SerialTransport::cancel() noexcept
     asio::dispatch(state_->strand, [self] { self->cancelActive(asio::error::operation_aborted); });
 }
 
-bool SerialTransport::isOpen() const noexcept { return state_->openFlag.load(); }
+SerialState SerialTransport::serialState() const noexcept { return state_->serialState.load(); }
 
-bool SerialTransport::busy() const noexcept { return state_->busyFlag.load(); }
+bool SerialTransport::isOpen() const noexcept
+{
+    return state_->serialState.load() == SerialState::Open;
+}
+
+bool SerialTransport::busy() const noexcept
+{
+    return state_->serialState.load() == SerialState::Closing || state_->activeFlag.load();
+}
 
 bool SerialTransport::operationActive() const noexcept { return state_->activeFlag.load(); }
 

@@ -16,9 +16,25 @@ RtuConnection::~RtuConnection() = default;
 
 void RtuConnection::open() { transport_->open(); }
 
-void RtuConnection::close() noexcept { transport_->close(); }
+void RtuConnection::close() noexcept
+{
+    try
+    {
+        transport_->asyncClose();
+    }
+    catch (...)
+    {
+    }
+}
+
+void RtuConnection::asyncClose(RtuCompletionHandler handler)
+{
+    transport_->asyncClose(std::move(handler));
+}
 
 void RtuConnection::cancel() noexcept { transport_->cancel(); }
+
+SerialState RtuConnection::serialState() const noexcept { return transport_->serialState(); }
 
 bool RtuConnection::isOpen() const noexcept { return transport_->isOpen(); }
 

@@ -63,6 +63,20 @@ enum class RtuFrameType
     Response
 };
 
+enum class SerialState
+{
+    Closed,
+    Open,
+    Closing
+};
+
+enum class ServiceState
+{
+    Idle,
+    Running,
+    Stopping
+};
+
 struct Rs485Options
 {
     /// Enables Linux kernel RS485 direction control. USB adapters with automatic

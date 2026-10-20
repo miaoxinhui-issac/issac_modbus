@@ -41,8 +41,12 @@ class RtuConnection final
     RtuConnection& operator=(RtuConnection&&) = delete;
 
     void open();
+    /// Initiates close without a completion boundary.
     void close() noexcept;
+    /// Completion runs after active I/O is gone and the port is Closed.
+    void asyncClose(RtuCompletionHandler handler = {});
     void cancel() noexcept;
+    [[nodiscard]] SerialState serialState() const noexcept;
     [[nodiscard]] bool isOpen() const noexcept;
     [[nodiscard]] bool busy() const noexcept;
     void setOptions(const SerialOptions& options);

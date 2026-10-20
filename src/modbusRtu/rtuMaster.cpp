@@ -403,10 +403,26 @@ void RtuMaster::open() { impl_->transport->open(); }
 
 void RtuMaster::close() noexcept
 {
+    try
+    {
+        asyncClose();
+    }
+    catch (...)
+    {
+    }
+}
+
+void RtuMaster::asyncClose(RtuCompletionHandler handler)
+{
     ++impl_->cancellationEpoch;
+    const auto closePhase = impl_->transport->beginClose();
     auto impl = impl_;
-    asio::dispatch(impl_->transport->strand(), [impl] { impl->requestCancel(); });
-    impl_->transport->close();
+    asio::dispatch(impl_->transport->strand(),
+                   [impl, closePhase, handler = std::move(handler)]() mutable
+                   {
+                       impl->requestCancel();
+                       impl->transport->continueClose(closePhase, std::move(handler));
+                   });
 }
 
 void RtuMaster::cancel() noexcept
@@ -419,7 +435,9 @@ void RtuMaster::cancel() noexcept
 
 bool RtuMaster::isOpen() const { return impl_->transport->isOpen(); }
 
-bool RtuMaster::busy() const { return impl_->busyFlag.load(); }
+SerialState RtuMaster::serialState() const { return impl_->transport->serialState(); }
+
+bool RtuMaster::busy() const { return impl_->busyFlag.load() || impl_->transport->busy(); }
 
 SerialOptions RtuMaster::serialOptions() const { return impl_->transport->options(); }
 

@@ -110,6 +110,23 @@ io.run();
 活动读或写；主站事务排队由 `RtuMaster` 管理，从站接收、业务和响应循环由
 `RtuSlave` 管理。串口配置只允许在关闭状态修改。
 
+串口状态为 `Closed / Open / Closing`。`close()` 表示发起关闭，需要等待真正
+关闭完成时使用：
+
+```cpp
+master.asyncClose([&](const std::error_code& error)
+{
+    if (!error)
+    {
+        // 此时串口已关闭，可以安全重新 open()。
+        master.open();
+    }
+});
+```
+
+设计演进和职责边界见
+[RTU_DESIGN_EVOLUTION.md](docs/RTU_DESIGN_EVOLUTION.md)。
+
 ## Mapping 地址空间
 
 `Mapping` 对齐 libmodbus 的 `modbus_mapping_t`，支持四类数据区各自的起始地址。

@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 namespace issac_modbus
 {
@@ -44,11 +45,9 @@ struct RtuSlave::Impl final : std::enable_shared_from_this<RtuSlave::Impl>
     std::shared_ptr<detail::SerialTransport> transport;
     const SlaveOptions options;
     const std::shared_ptr<Mapping> mapping;
-    bool serving = false;
     bool businessPending = false;
-    std::atomic<bool> stopping{false};
     std::atomic<bool> alive{true};
-    std::atomic<bool> busyFlag{false};
+    std::atomic<ServiceState> serviceState{ServiceState::Idle};
     std::atomic<std::uint64_t> serviceEpoch{0};
     std::uint64_t serveGeneration = 0;
     MappingHooks hooks;
@@ -56,6 +55,10 @@ struct RtuSlave::Impl final : std::enable_shared_from_this<RtuSlave::Impl>
     std::error_code stopError;
     asio::steady_timer phase;
     std::optional<asio::executor_work_guard<asio::io_context::executor_type>> workGuard;
+    std::vector<RtuCompletionHandler> closeWaiters;
+    bool closeInProgress = false;
+    bool transportClosing = false;
+    std::optional<detail::SerialTransport::ClosePhase> transportClosePhase;
 
     template <typename Handler, typename... Args> void notify(Handler handlerValue, Args... args)
     {
@@ -85,7 +88,7 @@ struct RtuSlave::Impl final : std::enable_shared_from_this<RtuSlave::Impl>
                                self->notify(std::move(nextHandler), asio::error::bad_descriptor);
                                return;
                            }
-                           if (self->serving)
+                           if (self->serviceState.load() != ServiceState::Idle)
                            {
                                self->notify(std::move(nextHandler),
                                             mbError(MBErrorCode::MBConcurrentOperation));
@@ -93,19 +96,17 @@ struct RtuSlave::Impl final : std::enable_shared_from_this<RtuSlave::Impl>
                            }
                            self->hooks = std::move(nextHooks);
                            self->handler = std::move(nextHandler);
-                           self->serving = true;
-                           self->stopping.store(false);
+                           self->serviceState.store(ServiceState::Running);
                            self->businessPending = false;
                            const auto generation = ++self->serveGeneration;
                            self->workGuard.emplace(asio::make_work_guard(self->transport->io()));
-                           self->busyFlag.store(true);
                            self->beginRead(generation);
                        });
     }
 
     void beginRead(std::uint64_t generation)
     {
-        if (!serving || stopping.load() || businessPending)
+        if (serviceState.load() != ServiceState::Running || businessPending)
             return;
         const auto serial = transport->options();
         auto self = shared_from_this();
@@ -113,9 +114,10 @@ struct RtuSlave::Impl final : std::enable_shared_from_this<RtuSlave::Impl>
                              serial.frameTimeout, serial.byteTimeout,
                              [self, generation](const std::error_code& error, RtuBytes data)
                              {
-                                 if (!self->serving || generation != self->serveGeneration)
+                                 if (self->serviceState.load() == ServiceState::Idle ||
+                                     generation != self->serveGeneration)
                                      return;
-                                 if (self->stopping.load())
+                                 if (self->serviceState.load() == ServiceState::Stopping)
                                  {
                                      self->finish(self->stopError);
                                      return;
@@ -146,24 +148,25 @@ struct RtuSlave::Impl final : std::enable_shared_from_this<RtuSlave::Impl>
             std::chrono::duration_cast<std::chrono::milliseconds>(transport->options().frameGap));
         phase.expires_after(delay);
         auto self = shared_from_this();
-        phase.async_wait(asio::bind_executor(transport->strand(),
-                                             [self, generation](const std::error_code& timerError)
-                                             {
-                                                 if (timerError || !self->serving ||
-                                                     generation != self->serveGeneration)
-                                                     return;
-                                                 if (self->stopping.load())
-                                                 {
-                                                     self->finish(self->stopError);
-                                                     return;
-                                                 }
-                                                 if (auto error = self->transport->flushInput())
-                                                 {
-                                                     self->finish(error);
-                                                     return;
-                                                 }
-                                                 self->beginRead(generation);
-                                             }));
+        phase.async_wait(asio::bind_executor(
+            transport->strand(),
+            [self, generation](const std::error_code& timerError)
+            {
+                if (timerError || self->serviceState.load() == ServiceState::Idle ||
+                    generation != self->serveGeneration)
+                    return;
+                if (self->serviceState.load() == ServiceState::Stopping)
+                {
+                    self->finish(self->stopError);
+                    return;
+                }
+                if (auto error = self->transport->flushInput())
+                {
+                    self->finish(error);
+                    return;
+                }
+                self->beginRead(generation);
+            }));
     }
 
     static RtuBytes exceptionFrame(std::uint8_t unit, std::uint8_t functionCode, MBErrorCode code)
@@ -229,9 +232,10 @@ struct RtuSlave::Impl final : std::enable_shared_from_this<RtuSlave::Impl>
                        [self, generation, output = std::move(output)]() mutable
                        {
                            self->businessPending = false;
-                           if (!self->serving || generation != self->serveGeneration)
+                           if (self->serviceState.load() == ServiceState::Idle ||
+                               generation != self->serveGeneration)
                                return;
-                           if (self->stopping.load())
+                           if (self->serviceState.load() == ServiceState::Stopping)
                            {
                                self->finish(self->stopError);
                                return;
@@ -250,7 +254,7 @@ struct RtuSlave::Impl final : std::enable_shared_from_this<RtuSlave::Impl>
             if (claimed->exchange(true))
                 return;
             RtuBytes output;
-            if (!self->stopping.load())
+            if (self->serviceState.load() != ServiceState::Stopping)
             {
                 try
                 {
@@ -323,9 +327,10 @@ struct RtuSlave::Impl final : std::enable_shared_from_this<RtuSlave::Impl>
         transport->asyncWrite(std::move(output), false,
                               [self, generation](const std::error_code& error, std::size_t)
                               {
-                                  if (!self->serving || generation != self->serveGeneration)
+                                  if (self->serviceState.load() == ServiceState::Idle ||
+                                      generation != self->serveGeneration)
                                       return;
-                                  if (self->stopping.load())
+                                  if (self->serviceState.load() == ServiceState::Stopping)
                                   {
                                       self->finish(self->stopError);
                                       return;
@@ -341,24 +346,25 @@ struct RtuSlave::Impl final : std::enable_shared_from_this<RtuSlave::Impl>
 
     void finish(std::error_code error)
     {
-        if (!serving)
+        if (serviceState.load() == ServiceState::Idle)
             return;
         phase.cancel();
-        serving = false;
-        stopping.store(false);
+        serviceState.store(ServiceState::Idle);
         businessPending = false;
         stopError.clear();
         workGuard.reset();
-        busyFlag.store(false);
         notify(std::move(handler), error);
+        if (closeInProgress)
+            beginTransportClose();
     }
 
     void requestStop(const std::error_code& error)
     {
-        if (!serving)
+        if (serviceState.load() == ServiceState::Idle)
             return;
-        stopping.store(true);
+        serviceState.store(ServiceState::Stopping);
         stopError = error;
+        transport->cancel();
         if (businessPending)
             return;
         if (transport->operationActive())
@@ -366,14 +372,49 @@ struct RtuSlave::Impl final : std::enable_shared_from_this<RtuSlave::Impl>
         finish(error);
     }
 
+    void beginTransportClose()
+    {
+        if (!closeInProgress || transportClosing || serviceState.load() != ServiceState::Idle)
+            return;
+        transportClosing = true;
+        auto self = shared_from_this();
+        const auto phase =
+            transportClosePhase.value_or(detail::SerialTransport::ClosePhase::Waiting);
+        transport->continueClose(phase,
+                                 [self](const std::error_code& error)
+                                 {
+                                     self->transportClosing = false;
+                                     self->closeInProgress = false;
+                                     self->transportClosePhase.reset();
+                                     auto waiters = std::move(self->closeWaiters);
+                                     self->closeWaiters.clear();
+                                     for (auto& waiter : waiters)
+                                         self->notify(std::move(waiter), error);
+                                 });
+    }
+
+    void requestClose(detail::SerialTransport::ClosePhase closePhase,
+                      RtuCompletionHandler closeHandler)
+    {
+        if (closeHandler)
+            closeWaiters.push_back(std::move(closeHandler));
+        if (closeInProgress)
+            return;
+        closeInProgress = true;
+        transportClosePhase = closePhase;
+        requestStop(asio::error::operation_aborted);
+        if (serviceState.load() == ServiceState::Idle)
+            beginTransportClose();
+    }
+
     void shutdown()
     {
         alive.store(false);
         ++serviceEpoch;
+        const auto closePhase = transport->beginClose();
         auto self = shared_from_this();
         asio::dispatch(transport->strand(),
-                       [self] { self->requestStop(asio::error::operation_aborted); });
-        transport->close();
+                       [self, closePhase] { self->requestClose(closePhase, {}); });
     }
 };
 
@@ -389,17 +430,28 @@ void RtuSlave::open() { impl_->transport->open(); }
 
 void RtuSlave::close() noexcept
 {
+    try
+    {
+        asyncClose();
+    }
+    catch (...)
+    {
+    }
+}
+
+void RtuSlave::asyncClose(RtuCompletionHandler handler)
+{
     ++impl_->serviceEpoch;
+    const auto closePhase = impl_->transport->beginClose();
     auto impl = impl_;
     asio::dispatch(impl_->transport->strand(),
-                   [impl] { impl->requestStop(asio::error::operation_aborted); });
-    impl_->transport->close();
+                   [impl, closePhase, handler = std::move(handler)]() mutable
+                   { impl->requestClose(closePhase, std::move(handler)); });
 }
 
 void RtuSlave::cancel() noexcept
 {
     ++impl_->serviceEpoch;
-    impl_->transport->cancel();
     auto impl = impl_;
     asio::dispatch(impl_->transport->strand(),
                    [impl] { impl->requestStop(asio::error::operation_aborted); });
@@ -407,7 +459,12 @@ void RtuSlave::cancel() noexcept
 
 bool RtuSlave::isOpen() const { return impl_->transport->isOpen(); }
 
-bool RtuSlave::busy() const { return impl_->busyFlag.load(); }
+SerialState RtuSlave::serialState() const { return impl_->transport->serialState(); }
+
+bool RtuSlave::busy() const
+{
+    return impl_->serviceState.load() != ServiceState::Idle || impl_->transport->busy();
+}
 
 SerialOptions RtuSlave::serialOptions() const { return impl_->transport->options(); }
 
@@ -429,7 +486,6 @@ void RtuSlave::asyncServe(MappingHooks hooks, RtuCompletionHandler handler)
 void RtuSlave::stopServe() noexcept
 {
     ++impl_->serviceEpoch;
-    impl_->transport->cancel();
     auto impl = impl_;
     asio::dispatch(impl_->transport->strand(),
                    [impl] { impl->requestStop(asio::error::operation_aborted); });

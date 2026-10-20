@@ -15,6 +15,7 @@
 #include <string>
 #include <thread>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace
@@ -521,6 +522,99 @@ void masterCloseDuringRetryDelay()
             "master close completes a transaction waiting for retry");
 }
 
+void masterAsyncCloseBoundary()
+{
+    Pty pty;
+    asio::io_context io;
+    issac_modbus::RtuMaster master(io, pty.path());
+    master.open();
+
+    std::vector<int> completionOrder;
+    std::atomic<bool> peerReceived{false};
+    bool closedInCallback = false;
+    bool reopenedInCallback = false;
+    std::error_code closeError = asio::error::would_block;
+    Actor peer(
+        [&]
+        {
+            if (pty.readable(80))
+            {
+                peerReceived.store(true, std::memory_order_release);
+                (void)pty.read(8);
+            }
+        });
+
+    master.asyncReadHoldingRegisters(
+        1, 0, 1,
+        [&](const std::error_code&, std::vector<issac_modbus::ModbusCell>,
+            std::optional<issac_modbus::ModbusException>) { completionOrder.push_back(1); });
+    master.asyncClose(
+        [&](const std::error_code& error)
+        {
+            closeError = error;
+            completionOrder.push_back(2);
+            closedInCallback = master.serialState() == issac_modbus::SerialState::Closed;
+            master.open();
+            reopenedInCallback = master.serialState() == issac_modbus::SerialState::Open;
+            io.stop();
+        });
+    require(master.serialState() == issac_modbus::SerialState::Closing,
+            "master enters Closing when asyncClose is requested");
+    io.run();
+    peer.join();
+
+    require(!closeError, "master asyncClose completes successfully");
+    require(!peerReceived.load(std::memory_order_acquire),
+            "master asyncClose prevents a pending request from starting");
+    require(completionOrder == std::vector<int>{1, 2},
+            "master transaction completion precedes asyncClose completion");
+    require(closedInCallback, "master asyncClose callback observes Closed state");
+    require(reopenedInCallback, "master can reopen from asyncClose completion");
+}
+
+void multipleAsyncCloseCompletions()
+{
+    Pty pty;
+    asio::io_context io;
+    issac_modbus::RtuMaster master(io, pty.path());
+    master.open();
+
+    int completions = 0;
+    bool bothSawClosed = true;
+    bool reopened = false;
+    master.asyncClose(
+        [&](const std::error_code& error)
+        {
+            require(!error, "first master asyncClose succeeds");
+            bothSawClosed =
+                bothSawClosed && master.serialState() == issac_modbus::SerialState::Closed;
+            if (++completions == 2)
+            {
+                master.open();
+                reopened = master.serialState() == issac_modbus::SerialState::Open;
+                io.stop();
+            }
+        });
+    master.asyncClose(
+        [&](const std::error_code& error)
+        {
+            require(!error, "second master asyncClose succeeds");
+            bothSawClosed =
+                bothSawClosed && master.serialState() == issac_modbus::SerialState::Closed;
+            if (++completions == 2)
+            {
+                master.open();
+                reopened = master.serialState() == issac_modbus::SerialState::Open;
+                io.stop();
+            }
+        });
+    io.run();
+
+    require(completions == 2, "all master asyncClose callers complete");
+    require(bothSawClosed, "all close callbacks observe Closed state");
+    require(reopened, "master can reopen after coalesced close completion");
+}
+
 void slaveAddressBroadcastAndResponse()
 {
     Pty pty;
@@ -624,6 +718,40 @@ void slaveStopAndRestartBeforeIoRuns()
     require(secondCompletions.load() == 1, "slave can be restarted after pre-run cancellation");
     require(secondError == asio::error::operation_aborted,
             "restarted slave stops with operation_aborted");
+}
+
+void slaveAsyncCloseBoundary()
+{
+    Pty pty;
+    auto mapping = std::make_shared<issac_modbus::Mapping>(0, 0, 1, 0);
+    asio::io_context io;
+    issac_modbus::RtuSlave slave(io, pty.path(), mapping);
+    slave.open();
+
+    std::vector<int> completionOrder;
+    bool closedInCallback = false;
+    bool reopenedInCallback = false;
+    std::error_code closeError = asio::error::would_block;
+    slave.asyncServe([&](const std::error_code&) { completionOrder.push_back(1); });
+    slave.asyncClose(
+        [&](const std::error_code& error)
+        {
+            closeError = error;
+            completionOrder.push_back(2);
+            closedInCallback = slave.serialState() == issac_modbus::SerialState::Closed;
+            slave.open();
+            reopenedInCallback = slave.serialState() == issac_modbus::SerialState::Open;
+            io.stop();
+        });
+    require(slave.serialState() == issac_modbus::SerialState::Closing,
+            "slave enters Closing when asyncClose is requested");
+    io.run();
+
+    require(!closeError, "slave asyncClose completes successfully");
+    require(completionOrder == std::vector<int>{1, 2},
+            "slave service completion precedes asyncClose completion");
+    require(closedInCallback, "slave asyncClose callback observes Closed state");
+    require(reopenedInCallback, "slave can reopen from asyncClose completion");
 }
 
 void frameGapDelaysNormalResponse()
@@ -899,23 +1027,33 @@ void manualRejectsConcurrentOperations()
 
 int main()
 {
-    masterRetryAndMatch();
-    masterRejectsMismatchedPayload();
-    masterQueuesTransactionsFifo();
-    masterCancelAndReuse();
-    masterCancelBeforeIoRuns();
-    masterTransactionDeadlineCoversRetryDelay();
-    masterCloseDuringRetryDelay();
-    slaveAddressBroadcastAndResponse();
-    slaveStopAndRestartBeforeIoRuns();
-    frameGapDelaysNormalResponse();
-    slaveDestructionWhileServing();
-    slaveWaitsForDispatchedBusinessOnStop();
-    masterSlaveRoundTrip();
-    manualTotalFrameDeadline();
-    manualRejectsOversizeHeader();
-    manualReceivesRequestFrame();
-    manualRejectsConcurrentOperations();
+    const std::pair<const char*, void (*)()> tests[] = {
+        {"master retry and match", masterRetryAndMatch},
+        {"master rejects mismatched payload", masterRejectsMismatchedPayload},
+        {"master queues transactions FIFO", masterQueuesTransactionsFifo},
+        {"master cancel and reuse", masterCancelAndReuse},
+        {"master cancel before IO runs", masterCancelBeforeIoRuns},
+        {"master transaction deadline", masterTransactionDeadlineCoversRetryDelay},
+        {"master close during retry", masterCloseDuringRetryDelay},
+        {"master async close boundary", masterAsyncCloseBoundary},
+        {"multiple async close completions", multipleAsyncCloseCompletions},
+        {"slave address and broadcast", slaveAddressBroadcastAndResponse},
+        {"slave stop and restart", slaveStopAndRestartBeforeIoRuns},
+        {"slave async close boundary", slaveAsyncCloseBoundary},
+        {"frame gap response timing", frameGapDelaysNormalResponse},
+        {"slave destruction while serving", slaveDestructionWhileServing},
+        {"slave dispatched business stop", slaveWaitsForDispatchedBusinessOnStop},
+        {"master slave round trip", masterSlaveRoundTrip},
+        {"manual total frame deadline", manualTotalFrameDeadline},
+        {"manual oversize header", manualRejectsOversizeHeader},
+        {"manual request frame", manualReceivesRequestFrame},
+        {"manual concurrent rejection", manualRejectsConcurrentOperations},
+    };
+    for (const auto& [name, test] : tests)
+    {
+        std::cout << "RUN " << name << std::endl;
+        test();
+    }
 
     if (failures != 0)
     {

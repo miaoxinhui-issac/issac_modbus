@@ -16,6 +16,13 @@ namespace issac_modbus::detail
 class SerialTransport final
 {
   public:
+    enum class ClosePhase
+    {
+        Initiated,
+        Waiting,
+        AlreadyClosed
+    };
+
     SerialTransport(asio::io_context& io, std::string device, SerialOptions options);
     ~SerialTransport();
 
@@ -31,8 +38,12 @@ class SerialTransport final
 
     /// Close and cancellation post their work to the transport strand.
     void close() noexcept;
+    void asyncClose(RtuCompletionHandler handler = {});
+    [[nodiscard]] ClosePhase beginClose() noexcept;
+    void continueClose(ClosePhase phase, RtuCompletionHandler handler = {});
     void cancel() noexcept;
 
+    [[nodiscard]] SerialState serialState() const noexcept;
     [[nodiscard]] bool isOpen() const noexcept;
     [[nodiscard]] bool busy() const noexcept;
     [[nodiscard]] bool operationActive() const noexcept;

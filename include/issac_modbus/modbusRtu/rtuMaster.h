@@ -33,8 +33,12 @@ class RtuMaster final
     RtuMaster& operator=(RtuMaster&&) = delete;
 
     void open();
+    /// Initiates close without a completion boundary.
     void close() noexcept;
+    /// Completion runs after transaction cleanup and port close.
+    void asyncClose(RtuCompletionHandler handler = {});
     void cancel() noexcept;
+    [[nodiscard]] SerialState serialState() const;
     [[nodiscard]] bool isOpen() const;
     [[nodiscard]] bool busy() const;
     [[nodiscard]] SerialOptions serialOptions() const;
